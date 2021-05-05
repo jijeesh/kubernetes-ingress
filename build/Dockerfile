@@ -12,8 +12,21 @@ RUN apt-get update \
 ############################################# Base image for Alpine #############################################
 FROM nginx:1.19.9-alpine AS alpine
 
-RUN apk add --no-cache libcap \
-	&& rm -rf /var/cache/apk/*
+RUN apk add --no-cache libcap
+
+
+############################################# Base image for Alpine with NGINX Plus #############################################
+FROM alpine:3.13 as alpine-plus
+ENV NGINX_PLUS_VERSION 24-r1
+
+RUN --mount=type=secret,id=nginx-repo.crt,dst=/etc/apk/cert.pem,mode=0644 \
+	--mount=type=secret,id=nginx-repo.key,dst=/etc/apk/cert.key,mode=0644 \
+	set -x \
+	&& wget -O /etc/apk/keys/nginx_signing.rsa.pub https://cs.nginx.com/static/keys/nginx_signing.rsa.pub \
+	&& printf "https://pkgs.nginx.com/plus/alpine/v`egrep -o '^[0-9]+\.[0-9]+' /etc/alpine-release`/main\n" >> /etc/apk/repositories \
+	&& apk add --no-cache libcap nginx-plus=${NGINX_PLUS_VERSION} nginx-plus-module-njs
+
+COPY --chown=nginx:0 internal/configs/oidc/* /etc/nginx/oidc/
 
 
 ############################################# Base image for Debian with NGINX Plus #############################################

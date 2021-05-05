@@ -135,6 +135,12 @@ jobs:
             type: oss
             ic-type: nginx-ingress
           - os: ubuntu-20.04
+            image: alpine-plus
+            tag: ${{ github.sha }}
+            marker: 'vs'
+            type: plus
+            ic-type: nginx-plus-ingress
+          - os: ubuntu-20.04
             image: ubi-plus
             tag: ${{ github.sha }}
             marker: 'ingresses'
