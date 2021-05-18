@@ -1,5 +1,6 @@
 # syntax=docker/dockerfile:1.2
 ARG BUILD_OS=debian
+ARG NGINX_PLUS_VERSION=r24
 
 ############################################# Base image for Debian #############################################
 FROM nginx:1.19.10 AS debian
@@ -20,8 +21,7 @@ RUN apk add --no-cache libcap \
 ############################################# Base image for Debian with NGINX Plus #############################################
 FROM debian:buster-slim AS debian-plus
 ARG IC_VERSION
-ENV NGINX_PLUS_VERSION 23-1~buster
-ENV NGINX_NJS_VERSION 23+0.5.0-1~buster
+ARG NGINX_PLUS_VERSION
 
 RUN --mount=type=secret,id=nginx-repo.crt,dst=/etc/ssl/nginx/nginx-repo.crt,mode=0644 \
 	--mount=type=secret,id=nginx-repo.key,dst=/etc/ssl/nginx/nginx-repo.key,mode=0644 \
@@ -34,8 +34,10 @@ RUN --mount=type=secret,id=nginx-repo.crt,dst=/etc/ssl/nginx/nginx-repo.crt,mode
 	&& wget -P /etc/apt/apt.conf.d https://cs.nginx.com/static/files/90pkgs-nginx \
 	&& echo "Acquire::https::pkgs.nginx.com::User-Agent  \"k8s-ic-$IC_VERSION-apt\";" >> /etc/apt/apt.conf.d/90pkgs-nginx \
 	&& printf "deb https://pkgs.nginx.com/plus/debian buster nginx-plus\n" > /etc/apt/sources.list.d/nginx-plus.list \
-	&& apt-get update && apt-get install --no-install-recommends --no-install-suggests -y \
-	nginx-plus=${NGINX_PLUS_VERSION} nginx-plus-module-njs=${NGINX_NJS_VERSION} \
+	&& apt-get update \
+	&& apt-get install --no-install-recommends --no-install-suggests -y \
+	nginx-plus=$(apt-cache showpkg nginx-plus-$NGINX_PLUS_VERSION | awk '{ if ($1 == "nginx-plus") {print $2; exit}}') \
+	nginx-plus-module-njs=$(apt-cache showpkg nginx-plus-module-njs-$NGINX_PLUS_VERSION | awk '{ if ($1 == "nginx-plus-module-njs") {print $2; exit}}') \
 	&& apt-get purge --auto-remove -y apt-transport-https gnupg wget \
 	&& rm -rf /var/lib/apt/lists/*
 
@@ -45,13 +47,7 @@ COPY --chown=nginx:0 internal/configs/oidc/* /etc/nginx/oidc/
 ############################################# Base image for Debian with NGINX Plus and App Protect #############################################
 FROM debian-plus as debian-plus-nap
 ARG IC_VERSION
-
-ENV APPPROTECT_MODULE_VERSION 23+3.462.0-1~buster
-ENV APPPROTECT_PLUGIN_VERSION 3.462.0-1~buster
-ENV APPPROTECT_ENGINE_VERSION 6.53.1-1~buster
-ENV APPPROTECT_COMPILER_VERSION 6.53.1-1~buster
-ENV APPPROTECT_SIG_VERSION 2021.02.26-1~buster
-ENV APPPROTECT_THREAT_CAMPAIGNS_VERSION 2021.03.02-1~buster
+ARG NGINX_PLUS_VERSION
 
 RUN --mount=type=secret,id=nginx-repo.crt,dst=/etc/ssl/nginx/nginx-repo.crt,mode=0644 \
 	--mount=type=secret,id=nginx-repo.key,dst=/etc/ssl/nginx/nginx-repo.key,mode=0644 \
@@ -65,14 +61,17 @@ RUN --mount=type=secret,id=nginx-repo.crt,dst=/etc/ssl/nginx/nginx-repo.crt,mode
 	&& echo "Acquire::https::pkgs.nginx.com::User-Agent  \"k8s-ic-$IC_VERSION-nap-$APPPROTECT_MODULE_VERSION-apt\";" >> /etc/apt/apt.conf.d/90pkgs-nginx \
 	&& printf "deb https://pkgs.nginx.com/app-protect/debian buster nginx-plus\n" | tee /etc/apt/sources.list.d/nginx-app-protect.list \
 	&& printf "deb https://pkgs.nginx.com/app-protect-security-updates/debian buster nginx-plus\n" | tee -a /etc/apt/sources.list.d/nginx-app-protect.list \
-	&& apt-get update && apt-get install --no-install-recommends --no-install-suggests -y \
-	nginx-plus-module-appprotect=$APPPROTECT_MODULE_VERSION \
-	app-protect-plugin=$APPPROTECT_PLUGIN_VERSION \
-	app-protect-engine=$APPPROTECT_ENGINE_VERSION \
-	app-protect-compiler=$APPPROTECT_COMPILER_VERSION \
-	app-protect=$APPPROTECT_MODULE_VERSION \
-	&& apt-get install -y app-protect-attack-signatures${APPPROTECT_SIG_VERSION:+=$APPPROTECT_SIG_VERSION} \
-	&& apt-get install -y app-protect-threat-campaigns${APPPROTECT_THREAT_CAMPAIGNS_VERSION:+=$APPPROTECT_THREAT_CAMPAIGNS_VERSION} \
+	&& apt-get update \
+	&& module_version=$(apt-cache showpkg nginx-plus-module-appprotect | awk -v ver="nginx-plus-$NGINX_PLUS_VERSION" '{ if ($6 == ver) {print $1; exit}}') \
+	engine_version=$(apt-cache showpkg app-protect | awk -v ver="$module_version" '{ if ($1 == ver && $3 == "nginx-plus-module-appprotect") {print substr($NF, 1, length($NF)-1); exit}}') \
+	&& apt-get install --no-install-recommends --no-install-suggests -y \
+	nginx-plus-module-appprotect=${module_version} \
+	app-protect-plugin=$(apt-cache showpkg nginx-plus-module-appprotect | awk -v ver="nginx-plus-$NGINX_PLUS_VERSION" '{ if ($6 == ver) {print substr($NF, 1, length($NF)-1); exit}}') \
+	app-protect-engine=${engine_version} \
+	app-protect-compiler=${engine_version} \
+	app-protect=${module_version} \
+	&& apt-get install -y app-protect-attack-signatures \
+	&& apt-get install -y app-protect-threat-campaigns \
 	&& apt-get purge --auto-remove -y apt-transport-https gnupg wget \
 	&& rm -rf /var/lib/apt/lists/* \
 	&& rm /etc/apt/sources.list.d/nginx-app-protect.list
@@ -134,8 +133,7 @@ RUN rpm --import https://nginx.org/keys/nginx_signing.key \
 
 ############################################# Base image for UBI with NGINX Plus #############################################
 FROM ubi-base AS ubi-plus
-
-ENV NGINX_PLUS_VERSION r23
+ARG NGINX_PLUS_VERSION
 
 RUN --mount=type=secret,id=nginx-repo.crt,dst=/etc/ssl/nginx/nginx-repo.crt,mode=0644 \
 	--mount=type=secret,id=nginx-repo.key,dst=/etc/ssl/nginx/nginx-repo.key,mode=0644 \
@@ -219,13 +217,13 @@ RUN ldconfig
 
 ############################################# Build image for Opentracing with NGINX Plus #############################################
 FROM debian-plus as opentracing-plus
-
-ENV NGINX_OPENTRACING_MODULE_VERSION 23+0.9.0-1~buster
+ARG NGINX_PLUS_VERSION
 
 RUN --mount=type=secret,id=nginx-repo.crt,dst=/etc/ssl/nginx/nginx-repo.crt,mode=0644 \
 	--mount=type=secret,id=nginx-repo.key,dst=/etc/ssl/nginx/nginx-repo.key,mode=0644 \
 	apt-get update && \
-	apt-get install --no-install-recommends --no-install-suggests -y nginx-plus-module-opentracing=${NGINX_OPENTRACING_MODULE_VERSION} && \
+	apt-get install --no-install-recommends --no-install-suggests -y \
+	nginx-plus-module-opentracing=$(apt-cache showpkg nginx-plus-module-opentracing-$NGINX_PLUS_VERSION | awk '{ if ($1 == "nginx-plus-module-opentracing") {print $2; exit}}') && \
 	rm -rf /var/lib/apt/lists/*
 
 COPY --from=tracer-downloader /usr/local/lib/libjaegertracing_plugin.so /usr/local/lib/libjaegertracing_plugin.so
